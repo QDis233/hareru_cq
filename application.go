@@ -1,7 +1,7 @@
 package hareru_cq
 
 import (
-	"log"
+	log "github.com/sirupsen/logrus"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,7 +20,7 @@ type Application struct {
 
 func (app *Application) Init() error {
 	if app.initialized {
-		log.Fatal(app.Name, "Already initialized!")
+		log.Error(app.Name, "Already initialized!")
 		return &AlreadyInitializedErr{}
 	}
 
@@ -62,7 +62,7 @@ func (app *Application) RunPulling() {
 	}
 
 	if app.running {
-		log.Fatal(app.Name, " 已在运行中")
+		log.Error(app.Name, " 已在运行中")
 		return
 	}
 
@@ -74,7 +74,7 @@ func (app *Application) RunPulling() {
 
 func (app *Application) processUpdate() {
 	app.running = true
-	log.Println(app.Name, " 启动成功!")
+	log.Infoln(app.Name, " 启动成功!")
 
 	for {
 		update := <-app.Updater.Updates
@@ -95,7 +95,7 @@ func (app *Application) exitHandler() {
 
 	go func() {
 		<-exitSignal
-		log.Println("Stopping...")
+		log.Infoln("Stopping...")
 
 		defer app.Bot.Stop()
 

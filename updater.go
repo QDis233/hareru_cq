@@ -2,7 +2,7 @@ package hareru_cq
 
 import (
 	"encoding/json"
-	"log"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/tidwall/gjson"
 )
@@ -21,12 +21,12 @@ type Update struct {
 
 func (updater *Updater) Init() error {
 	if updater.initialized {
-		log.Println("Updater 已经初始化")
+		log.Error("Updater 已经初始化")
 		return &AlreadyInitializedErr{}
 	}
 
 	if updater.Bot.initialized == false {
-		log.Fatal("Bot 未初始化")
+		log.Error("Bot 未初始化")
 		return &NotAvailableErr{
 			"Bot have not been initialized",
 		}

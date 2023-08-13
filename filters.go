@@ -1,7 +1,7 @@
 package hareru_cq
 
 type Filter interface {
-	Filter(*Update, ...any) bool
+	Filter(args ...any) bool
 }
 
 type EventFilter struct {

@@ -1,25 +1,23 @@
 package hareru_cq
 
-func buildMessage(update *Update) *Message {
-	msg := Message{
-		MessageType: update.Event.Get("message_type").String(),
-		MessageID:   update.Event.Get("message_id").Int(),
-		Sender: struct {
-			UserId   int64  `json:"user_id"`
-			NickName string `json:"nickname"`
-			Card     string `json:"card"`
-		}{
-			UserId:   update.Event.Get("sender.user_id").Int(),
-			NickName: update.Event.Get("sender.nickname").String(),
-		},
-		RawMessage: update.Event.Get("raw_message").String(),
+import (
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+)
 
-		Bot: update.Bot,
+func getHttpRes(url string) ([]byte, error) {
+	client := http.Client{}
+	response, err := client.Get(url)
+	defer response.Body.Close()
+	if err != nil {
+		return nil, err
 	}
 
-	if msg.IsGroupMessage() {
-		msg.GroupId = update.Event.Get("group_id").Int()
+	if response.StatusCode != http.StatusOK {
+		return nil, errors.New(fmt.Sprintf("http request error: %d %s", response.StatusCode, response.Status))
 	}
 
-	return &msg
+	return io.ReadAll(response.Body)
 }

@@ -1,12 +1,14 @@
 package hareru_cq
 
 import (
+	"bytes"
 	"encoding/json"
-	uuid "github.com/satori/go.uuid"
-	"github.com/tidwall/gjson"
-	"log"
-
+	"fmt"
 	"github.com/gorilla/websocket"
+	uuid "github.com/satori/go.uuid"
+	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
+	"image"
 )
 
 const (
@@ -30,6 +32,10 @@ const (
 
 	LifecycleEvent = "lifecycle" //MetaEvents
 	HeartbeatEvent = "heartbeat"
+
+	GroupOwnerRole  = "owner"
+	GroupAdminRole  = "admin"
+	GroupMemberRole = "member"
 )
 
 type Bot struct {
@@ -49,7 +55,7 @@ type BotInfo struct {
 func (bot *Bot) doAction(req *CqRequest) error {
 	err := bot.Client.ActConn.WriteJSON(req)
 	if err != nil {
-		log.Fatal("发送请求失败:", err)
+		log.Error("发送请求失败:", err)
 		return err
 	}
 	return nil
@@ -69,6 +75,7 @@ func (bot *Bot) getActionResult(echo string) *CqResponse {
 
 func (bot *Bot) Stop() {
 	bot.Client.Close()
+	bot.initialized = false
 }
 
 func (bot *Bot) Init() error {
@@ -79,7 +86,7 @@ func (bot *Bot) Init() error {
 		}
 	}
 
-	botInfo, err := bot.getLoginInfo()
+	botInfo, err := bot.getBotInfo()
 	if err != nil {
 		log.Fatal("获取Bot信息失败:", err)
 		return err
@@ -92,7 +99,7 @@ func (bot *Bot) Init() error {
 
 	bot.initialized = true
 
-	log.Printf("Bot Info: %s(%d)", bot.Info.NickName, bot.Info.UserId)
+	log.Infof("Bot Info: %s(%d)", bot.Info.NickName, bot.Info.UserId)
 
 	return nil
 }
@@ -101,8 +108,8 @@ func (bot *Bot) IsInitialized() bool {
 	return bot.initialized
 }
 
-// Just for API test
-func (bot *Bot) getLoginInfo() (*BotInfo, error) {
+// getBotInfo 获取Bot信息
+func (bot *Bot) getBotInfo() (*BotInfo, error) {
 	req := CqRequest{
 		Action: "get_login_info",
 	}
@@ -185,9 +192,7 @@ func (bot *Bot) SendPrivateMessage(message string, userId int64, autoEscape bool
 	}
 
 	err := bot.doAction(&req)
-
 	if err != nil {
-		log.Println("发送消息失败:", err)
 		return err
 	}
 
@@ -216,7 +221,6 @@ func (bot *Bot) SendGroupMessage(message string, groupId int64, autoEscape bool)
 	err := bot.doAction(&req)
 
 	if err != nil {
-		log.Println("发送消息失败:", err)
 		return err
 	}
 
@@ -229,8 +233,8 @@ func (bot *Bot) SendGroupMessage(message string, groupId int64, autoEscape bool)
 }
 
 // GetMessage 获取消息
-// messageId int64 消息ID
-func (bot *Bot) GetMessage(messageId int64) *Message {
+// messageId int64 消息ID Not real_id
+func (bot *Bot) GetMessage(messageId int64, furtherInfo bool) (*Message, error) {
 	req := CqRequest{
 		Action: "get_msg",
 		Params: map[string]interface{}{
@@ -241,23 +245,18 @@ func (bot *Bot) GetMessage(messageId int64) *Message {
 
 	err := bot.doAction(&req)
 	if err != nil {
-		log.Println("获取消息失败:", err)
-		return nil
+		return nil, &ActionFailErr{Message: err.Error()}
 	}
 
 	res := bot.getActionResult(req.Echo)
 	if res.Status != "ok" {
-		return nil
+		return nil, &ActionFailErr{res.Wording}
 	}
 
 	msg := &Message{
 		MessageType: res.Json.Get("data.message_type").String(),
 		MessageID:   res.Json.Get("data.message_id").Int(),
-		Sender: struct {
-			UserId   int64  `json:"user_id"`
-			NickName string `json:"nickname"`
-			Card     string `json:"card"`
-		}{
+		Sender: &User{
 			UserId:   res.Json.Get("data.sender.user_id").Int(),
 			NickName: res.Json.Get("data.sender.nickname").String(),
 		},
@@ -267,10 +266,18 @@ func (bot *Bot) GetMessage(messageId int64) *Message {
 	}
 
 	if msg.IsGroupMessage() {
-		msg.GroupId = res.Json.Get("data.group_id").Int()
+		groupId := res.Json.Get("data.group_id").Int()
+
+		grpMember, err := bot.GetGroupMember(groupId, msg.Sender.UserId)
+		if err != nil {
+			return nil, err
+		}
+
+		msg.GroupId = groupId
+		msg.GroupMember = grpMember
 	}
 
-	return msg
+	return msg, nil
 }
 
 func (bot *Bot) GetGroupList() [][]any {
@@ -281,7 +288,7 @@ func (bot *Bot) GetGroupList() [][]any {
 
 	err := bot.doAction(&req)
 	if err != nil {
-		log.Println("获取群组列表失败:", err)
+		log.Error("获取群组列表失败:", err)
 		return nil
 	}
 
@@ -300,4 +307,61 @@ func (bot *Bot) GetGroupList() [][]any {
 		groupList = append(groupList, append(make([]any, 0), groupId, groupName))
 	}
 	return groupList
+}
+
+func (bot *Bot) GetAvatar(userId int64, size int) (image.Image, error) {
+	url := fmt.Sprintf("https://q1.qlogo.cn/g?b=qq&nk=%d&s=%d", userId, size)
+
+	imageData, err := getHttpRes(url)
+	if err != nil {
+		log.Error("获取头像失败:", err)
+		return nil, err
+	}
+
+	imageDataReader := bytes.NewReader(imageData)
+	img, _, err := image.Decode(imageDataReader)
+	if err != nil {
+		log.Error("获取头像失败:", err)
+		return nil, err
+	}
+
+	return img, nil
+}
+
+func (bot *Bot) GetGroupMember(groupId int64, userId int64) (*GroupMember, error) {
+	req := CqRequest{
+		Action: "get_group_member_info",
+		Params: map[string]interface{}{
+			"group_id": groupId,
+			"user_id":  userId,
+		},
+		Echo: uuid.NewV4().String(),
+	}
+
+	err := bot.doAction(&req)
+	if err != nil {
+		return nil, &ActionFailErr{Message: "failed to get group member info " + err.Error()}
+	}
+
+	res := bot.getActionResult(req.Echo)
+	if res.Status != "ok" {
+		return nil, &ActionFailErr{Message: "failed to get group member info " + res.Wording}
+	}
+
+	grpMember := GroupMember{
+		User: &User{
+			UserId:   res.Json.Get("data.user_id").Int(),
+			NickName: res.Json.Get("data.nickname").String(),
+		},
+		Card: res.Json.Get("data.card").String(),
+
+		JoinTime:        res.Json.Get("data.join_time").Int(),
+		LastSentTime:    res.Json.Get("data.last_sent_time").Int(),
+		Level:           res.Json.Get("data.level").String(),
+		Role:            res.Json.Get("data.role").String(),
+		CardChangeable:  res.Json.Get("data.card_changeable").Bool(),
+		ShutUpTimeStamp: res.Json.Get("data.shut_up_timestamp").Int(),
+	}
+
+	return &grpMember, nil
 }

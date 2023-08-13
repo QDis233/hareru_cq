@@ -23,7 +23,7 @@ func (h *MessageHandler) CheckUpdate(update *Update) bool {
 }
 
 func (h *MessageHandler) HandleUpdate(update *Update) interface{} {
-	message := buildMessage(update)
+	message := buildMessageByUpdate(update)
 	return h.Callback(update, message)
 }
 
@@ -47,7 +47,7 @@ func (h *TextHandler) CheckUpdate(update *Update) bool {
 }
 
 func (h *TextHandler) HandleUpdate(update *Update) interface{} {
-	message := buildMessage(update)
+	message := buildMessageByUpdate(update)
 	return h.Callback(update, message)
 }
 
@@ -80,7 +80,7 @@ func (h *CommandHandler) CheckUpdate(update *Update) bool {
 }
 
 func (h *CommandHandler) HandleUpdate(update *Update) interface{} {
-	message := buildMessage(update)
+	message := buildMessageByUpdate(update)
 	return h.Callback(update, message)
 }
 
